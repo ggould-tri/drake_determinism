@@ -1,5 +1,7 @@
 #include "comms/unix_socket_lcm.h"
 
+#include <filesystem>
+
 namespace drake_determinism {
 namespace comms {
 
@@ -47,7 +49,19 @@ class UnixSocketLcm::Impl {
 
   explicit Impl(std::string lcm_url)
   : url_(lcm_url) {
-    ;  // ...
+    // First we parse the URL.
+    DRAKE_DEMAND(url_.substr(0, 5) == "unix:");
+    size_t query_pos = url_.rfind("?");
+    DRAKE_DEMAND(query_pos != std::string::npos);
+    std::string filename_base = url_.substr(6, query_pos - 6);
+    DRAKE_DEMAND(filename_base[0] == '/');
+    std::string query_string = url_.substr(query_pos);
+    DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
+    std::string endpoint_string = query_string.substr(4);
+    DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
+    output_socket_ = filename_base + "-" + endpoint_string;
+    input_socket_ = filename_base + "-" + (endpoint_string == "client"
+                                           ? "server" : "client");
   }
 
   ~Impl() {
@@ -80,6 +94,8 @@ class UnixSocketLcm::Impl {
 
  private:
   std::string url_;
+  std::filesystem::path output_socket_;
+  std::filesystem::path input_socket_;
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)
