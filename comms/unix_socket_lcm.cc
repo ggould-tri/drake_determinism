@@ -11,14 +11,33 @@ using HandlerFunction = DrakeLcmInterface::HandlerFunction;
 using MultichannelHandlerFunction =
     DrakeLcmInterface::MultichannelHandlerFunction;
 
-/*
 class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
  public:
   // DrakeLcm keeps this pinned; we will do likewise to minimize differences.
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(DrakeSubscription)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(UnixSocketLcmSubscription)
 
+  UnixSocketLcmSubscription(const std::string& channel,
+                            HandlerFunction single_channel_handler) {
+    ;  // ...
+  }
+
+  UnixSocketLcmSubscription(
+      MultichannelHandlerFunction single_channel_handler) {
+    ;  // ...
+  }
+
+  void set_unsubscribe_on_delete(bool /* enabled */) final {
+    ;  // ...
+  }
+
+  void set_queue_capacity(int) final {
+    // We let the socket be our queue for now.
+  }
+
+  ~UnixSocketLcmSubscription() {
+    ;  // ... ???
+  }
 };
-*/
 
 } // namespace
 
@@ -46,13 +65,13 @@ class UnixSocketLcm::Impl {
   }
 
   std::shared_ptr<DrakeSubscriptionInterface> Subscribe(
-      const std::string& /* channel */, HandlerFunction /* callback */) {
-    return nullptr;  // ...
+      const std::string& channel, HandlerFunction callback) {
+    return std::make_shared<UnixSocketLcmSubscription>(channel, callback);
   }
 
   std::shared_ptr<DrakeSubscriptionInterface> SubscribeAllChannels(
-      MultichannelHandlerFunction /* callback */) {
-    return nullptr;  // ...
+      MultichannelHandlerFunction callback) {
+    return std::make_shared<UnixSocketLcmSubscription>(callback);
   }
 
   int HandleSubscriptions(int timeout_millis) {
