@@ -1,0 +1,13 @@
+# -*- mode: python -*-
+# vi: set ft=python :
+
+cc_library(
+    name = "unix_socket_lcm",
+    srcs = ["unix_socket_lcm.cc"],
+    deps = [
+        "@drake//lcm:interface",
+        "@drake//common:essential",
+        "@lcm",
+    ],
+    hdrs = ["unix_socket_lcm.h"],
+)
