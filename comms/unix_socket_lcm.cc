@@ -41,6 +41,40 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
   }
 };
 
+enum UnixSocketEnd {
+  kServer,
+  kClient
+};
+
+struct SocketConfig {
+  std::string filename_base;
+  std::filesystem::path input_socket;
+  std::filesystem::path output_socket;
+  UnixSocketEnd end;
+};
+
+SocketConfig ParseUrl(std::string url) {
+  DRAKE_DEMAND(url.substr(0, 5) == "unix:");
+  size_t query_pos = url.rfind("?");
+  DRAKE_DEMAND(query_pos != std::string::npos);
+  std::string filename_base = url.substr(6, query_pos - 6);
+  DRAKE_DEMAND(filename_base[0] == '/');
+  std::string query_string = url.substr(query_pos);
+  DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
+  std::string endpoint_string = query_string.substr(4);
+  DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
+  UnixSocketEnd end = (endpoint_string == "client") ? kClient : kServer;
+  std::string output_socket = filename_base + "-" + endpoint_string;
+  std::string input_socket = filename_base + "-" + (end == kServer
+                                                    ? "server" : "client");
+  return SocketConfig{filename_base, input_socket, output_socket, end};
+}
+
+std::string BuildUrl(SocketConfig config) {
+  return "unix:" + config.filename_base + "?end=" + (config.end == kServer
+                                                     ? "server" : "client");
+}
+
 } // namespace
 
 class UnixSocketLcm::Impl {
@@ -48,20 +82,8 @@ class UnixSocketLcm::Impl {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Impl)
 
   explicit Impl(std::string lcm_url)
-  : url_(lcm_url) {
-    // First we parse the URL.
-    DRAKE_DEMAND(url_.substr(0, 5) == "unix:");
-    size_t query_pos = url_.rfind("?");
-    DRAKE_DEMAND(query_pos != std::string::npos);
-    std::string filename_base = url_.substr(6, query_pos - 6);
-    DRAKE_DEMAND(filename_base[0] == '/');
-    std::string query_string = url_.substr(query_pos);
-    DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
-    std::string endpoint_string = query_string.substr(4);
-    DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
-    output_socket_ = filename_base + "-" + endpoint_string;
-    input_socket_ = filename_base + "-" + (endpoint_string == "client"
-                                           ? "server" : "client");
+  : config_(ParseUrl(lcm_url)) {
+    DRAKE_DEMAND(lcm_url == BuildUrl(config_));
   }
 
   ~Impl() {
@@ -75,7 +97,7 @@ class UnixSocketLcm::Impl {
   }
 
   std::string get_lcm_url() const {
-    return url_;
+    return BuildUrl(config_);
   }
 
   std::shared_ptr<DrakeSubscriptionInterface> Subscribe(
@@ -93,9 +115,7 @@ class UnixSocketLcm::Impl {
   }
 
  private:
-  std::string url_;
-  std::filesystem::path output_socket_;
-  std::filesystem::path input_socket_;
+  SocketConfig config_;
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)
