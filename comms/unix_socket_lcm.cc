@@ -1,6 +1,11 @@
 #include "comms/unix_socket_lcm.h"
 
 #include <filesystem>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#include <drake/common/text_logging.h>
 
 namespace drake_determinism {
 namespace comms {
@@ -47,9 +52,7 @@ enum UnixSocketEnd {
 };
 
 struct SocketConfig {
-  std::string filename_base;
-  std::filesystem::path input_socket;
-  std::filesystem::path output_socket;
+  std::string filename;
   UnixSocketEnd end;
 };
 
@@ -73,6 +76,39 @@ SocketConfig ParseUrl(std::string url) {
 std::string BuildUrl(SocketConfig config) {
   return "unix:" + config.filename_base + "?end=" + (config.end == kServer
                                                      ? "server" : "client");
+}
+
+int CreateServerSocketAndAwait(std::filesystem::path path) {
+  int server_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+  DRAKE_DEMAND(server_sock != -1);
+
+  struct sockaddr_un server_sockaddr;
+  server_sockaddr.sun_family = AF_UNIX;
+  strcpy(server_sockaddr.sun_path, path);
+  unlink(path);
+
+  int bind_result = bind(server_sock,
+                         static_cast<struct sockaddr*>(&server_sockaddr),
+                         sizeof(server_sockaddr));
+  if (bind_result == -1) {
+    close(server_sock);
+    DRAKE_DEMAND(bind_result != -1);
+  }
+
+  drake::log->info("Created server socket and listening for connections: {}",
+                   path);
+
+  int listen_result = listen(server_sock, backlog);
+  if (listen_result == -1) {
+    close(server_sock);
+    DRAKE_DEMAND(listen_result != -1);
+  }
+
+  drake::log->info("Got a connection on socket: {}", path);
+}
+
+int ConnectClientSocket(std::filesystem::path path) {
+
 }
 
 } // namespace
