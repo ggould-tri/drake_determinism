@@ -1,5 +1,7 @@
 #include <limits>
 #include <memory>
+#include <set>
+#include <string>
 #include <vector>
 
 /// Implementation of the locked-time algorithm for synchronizing components
@@ -38,9 +40,11 @@
 /// A typical client will periodically poll for new messages and
 /// perform computation based on those messages.  
 ///
-/// In the extreme case of all clients depending on all messages, this
-/// algorithm is simply a gated event loop and no multiprocessing is permitted.
-/// To enable multiprocessing, certain latency measures are introduced below.
+/// In the default case of all clients depending on all messages, this
+/// algorithm would simply be a gated event loop and no multiprocessing
+/// permitted.  To enable multiprocessing, latency is added to message
+/// delivery and clients are permitted to pre-announce future read and write
+/// times.
 template<typename Message>
 class LockTimeServer {
   public:
@@ -52,7 +56,8 @@ class LockTimeServer {
     /// of the determinism boundary.  This may be a bug.
     using ClientId = int;
 
-    /// The notion of time visible to and used by clients.
+    /// The notion of time visible to and used by clients.  Note that messages
+    /// with the same LockTime still maintain an arbitrary-but-stable order.
     using LockTime = double;
 
     /// All of the information about a Message at the time that it is
@@ -66,7 +71,7 @@ class LockTimeServer {
         ///
         /// Clients are numbered from 0; negative IDs are reserved for
         /// implementation use (e.g. logging and announcements), will be
-        /// ignored by the server, and should be discarded by clients.
+        /// ignored by the server, and may be discarded by clients.
         ClientId sender_id;
 
         // What client will receive this message.
@@ -88,17 +93,17 @@ class LockTimeServer {
         }
     };
 
-    /// NOTE:  A C++ "multiset" is conceptually just a sorted vector. Since
-    /// C++03 it has been strongly deterministically ordered.
+    /// NOTE:  Since C++03 a C++ "multiset" is conceptually just a stable
+    /// sorted vector.
     using MessageQueue = std::multiset<MessageWithEnvelope>;
 
     /// A function callback provided by clients so that the server can
     /// deliver their pending messages.  The message vector will be sorted
-    /// by `delivery_time`.
+    /// by `delivery_time` and should be processed in order.
     using AllowAdvanceFn = std::function<void(LockTime, const MessageQueue&)>;
 
     /// Create a LockTimeServer.  Time will be initialized to zero.
-    void LockTimeServer(
+    LockTimeServer(
       LockTime delivery_latency = 0.005) 
         : delivery_latency_(delivery_latency) {}
 
@@ -109,13 +114,16 @@ class LockTimeServer {
     /// Returns the client's ID and the client's starting time, ie, the
     /// earliest time the client is permitted to mention or depend on.
     ///
+    /// After this call the client should AnnounceClientWork to its new
+    /// time along with any startup messages.
+    ///
     /// NOTE:  For performance, this method should allow clients to enroll
     /// a message filtering function, to allow users to implement pub/sub
     /// systems and reduce copying.  However reasoning about the time-locked
-    /// behaviour of such a filtering function is quite subtle (e.g. at what
+    /// behaviour of such a filtering function is subtle (e.g. at what
     /// LockTime does a subscription take effect, and how can that be causally
     /// enforced?) and so this is omitted for now.
-    std::pair<ClientId, Time> AttachClient(
+    std::pair<ClientId, LockTime> AttachClient(
         std::string client_name,
         AllowAdvanceFn advance_callback) {
       LockTime client_time = NoMoreReceivesTime();
@@ -146,9 +154,9 @@ class LockTimeServer {
       AdvanceClientTimes();
     };
 
-    /// Inform the server that a client will send no messages prior to
-    /// `silent_until`, e.g. because the client sends periodically, or
-    /// has completed a polling cycle, or it has a built-in processing
+    /// Inform the server that a client will not send or process messages
+    /// prior to `silent_until`, e.g. because the client sends periodically,
+    /// or has completed a polling cycle, or it has a built-in processing
     /// latency, or some similar reason.
     ///
     /// A client is never required to send this message, but it is polite
@@ -158,7 +166,7 @@ class LockTimeServer {
     void DeclareSilentUntil(
         ClientId client_id,
         LockTime silent_until) {
-      ClientInfo* client = &clients[client_id];
+      ClientInfo* client = &clients_[client_id];
       assert(silent_until >= client->earliest_possible_client_time);
       client->earliest_possible_client_time = silent_until;
     }
@@ -174,7 +182,9 @@ class LockTimeServer {
         LockTime last_send_time;
 
         // The latest time the server has authorized the client to advance
-        // to; the client's subjective time must this time or earlier.
+        // to (and correspondingly, the time until which all incoming messages
+        // have been delivered); the client's subjective time must this time
+        // or earlier.
         LockTime authorized_time;
 
         // Message queue for each client.
@@ -192,27 +202,38 @@ class LockTimeServer {
       return last_send_time;
     }
 
+    // The latest time at which we know the current receive queues to be
+    // complete.
     LockTime NoMoreReceivesTime() {
-      return NoMoreSendsTime + delivery_latency_;
+      return NoMoreSendsTime() + delivery_latency_;
     }
 
     void AdvanceClientTimes() {
       // If any client is not authorized to the latest possible receive time,
       // do so.
+      //
       // As the latest possible receive time is always at least
-      // `delivery_latency_` later than the earliest unhandled send, it should
+      // `delivery_latency_` later than the earliest latest send, it should
       // always be possible at least to authorize the recipient of that send.
       LockTime authorize_until = NoMoreReceivesTime();
       for (int i = 0; i < clients_.size(); i++) {
+        ClientInfo* client = &clients_[i];
         MessageQueue to_deliver;
-        for ()
+        while(true) {  // Drain off the deliverable prefix of message_queue.
+          if (client->message_queue.size() == 0) break;
+          auto first_msg = client->message_queue.begin();
+          if (first_msg->receive_time > authorize_until) break;
+          to_deliver.insert(first_msg);
+          client->message_queue.erase(first_msg);
+        }
+        client->callback(authorize_until, to_deliver);
       }
     }
 
     // NOTE:  We may want to change this in the future; for instance,
     // TRI's driving simulator uses a post-2038 sim start time to clearly
     // distinguish sim and real logs and test for time bugs.
-    constexpr LockTime kStart = 0;
+    static constexpr LockTime kStart = 0;
 
     // This can't be kConst because it is settable at ctor time.  It is
     // kept const because otherwise reasoning about when exactly it was
