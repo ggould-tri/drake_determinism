@@ -29,4 +29,6 @@
 
 /bazel-*
 /user.bazelrc
+.vscode
 *~
+
