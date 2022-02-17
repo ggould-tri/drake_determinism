@@ -1,0 +1,8 @@
+# -*- mode: python -*-
+# vi: set ft=python :
+
+cc_library(
+    name = "locktime",
+    srcs = ["locktime.cc"],
+    hdrs = ["locktime.h"],
+)
