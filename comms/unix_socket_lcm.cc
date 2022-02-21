@@ -1,9 +1,11 @@
 #include "comms/unix_socket_lcm.h"
 
+#include <errno.h>
 #include <filesystem>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <unistd.h>
 
 #include <drake/common/text_logging.h>
 
@@ -17,6 +19,9 @@ using drake::lcm::DrakeSubscriptionInterface;
 using HandlerFunction = DrakeLcmInterface::HandlerFunction;
 using MultichannelHandlerFunction =
     DrakeLcmInterface::MultichannelHandlerFunction;
+
+// By definition a unix socket can never have nontrivial connection backlog.
+constexpr static int kBacklog = 1;
 
 class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
  public:
@@ -58,24 +63,22 @@ struct SocketConfig {
 
 SocketConfig ParseUrl(std::string url) {
   DRAKE_DEMAND(url.substr(0, 5) == "unix:");
-  size_t query_pos = url.rfind("?");
+  std::string url_body = url.substr(5);
+  size_t query_pos = url_body.rfind("?");
   DRAKE_DEMAND(query_pos != std::string::npos);
-  std::string filename_base = url.substr(6, query_pos - 6);
-  DRAKE_DEMAND(filename_base[0] == '/');
-  std::string query_string = url.substr(query_pos);
+  std::string filename = url_body.substr(0, query_pos);
+  DRAKE_DEMAND(filename[0] == '/');
+  std::string query_string = url_body.substr(query_pos + 1);
   DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
   std::string endpoint_string = query_string.substr(4);
   DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
   UnixSocketEnd end = (endpoint_string == "client") ? kClient : kServer;
-  std::string output_socket = filename_base + "-" + endpoint_string;
-  std::string input_socket = filename_base + "-" + (end == kServer
-                                                    ? "server" : "client");
-  return SocketConfig{filename_base, input_socket, output_socket, end};
+  return SocketConfig{filename, end};
 }
 
 std::string BuildUrl(SocketConfig config) {
-  return "unix:" + config.filename_base + "?end=" + (config.end == kServer
-                                                     ? "server" : "client");
+  return "unix:" + config.filename + "?end=" + (config.end == kServer
+                                                ? "server" : "client");
 }
 
 int CreateServerSocketAndAwait(std::filesystem::path path) {
@@ -83,28 +86,48 @@ int CreateServerSocketAndAwait(std::filesystem::path path) {
   DRAKE_DEMAND(server_sock != -1);
 
   struct sockaddr_un server_sockaddr;
+  socklen_t server_sockaddr_len = sizeof(server_sockaddr);
   server_sockaddr.sun_family = AF_UNIX;
-  strcpy(server_sockaddr.sun_path, path);
-  unlink(path);
+  strcpy(server_sockaddr.sun_path, path.c_str());
+  std::filesystem::remove(path);
 
-  int bind_result = bind(server_sock,
-                         static_cast<struct sockaddr*>(&server_sockaddr),
-                         sizeof(server_sockaddr));
+  int bind_result = bind(
+      server_sock,
+      // Pointer-reinterpretation is a common idiom for posix sockets, in
+      // effect acting as a less safe version of superclass dynamic_cast<>.
+      reinterpret_cast<struct sockaddr*>(&server_sockaddr),
+      &server_sockaddr_len);
   if (bind_result == -1) {
+    drake::log()->error("Bind error: {}", strerror(errno));
     close(server_sock);
     DRAKE_DEMAND(bind_result != -1);
   }
 
-  drake::log->info("Created server socket and listening for connections: {}",
-                   path);
-
-  int listen_result = listen(server_sock, backlog);
+  drake::log()->info("Created server socket and listening for connections: {}",
+                     path);
+  int listen_result = listen(server_sock, kBacklog);
   if (listen_result == -1) {
+    drake::log()->error("Listen error: {}", strerror(errno));
     close(server_sock);
     DRAKE_DEMAND(listen_result != -1);
   }
+  struct sockaddr_un client_sockaddr;
+  socklen_t client_sockaddr_len = sizeof(client_sockaddr);
+  int client_sock = accept(
+      server_sock,
+      // Pointer-reinterpretation is a common idiom for posix sockets, in
+      // effect acting as a less safe version of superclass dynamic_cast<>.
+      reinterpret_cast<struct sockaddr*>(&client_sockaddr),
+      &client_sockaddr_len);
+  if (client_sock == -1){
+    drake::log()->error("Accept error: {}", strerror(errno));
+    close(server_sock);
+    close(client_sock);
+    exit(1);
+  }
 
-  drake::log->info("Got a connection on socket: {}", path);
+  drake::log()->info("Got a connection on socket: {}", path);
+  return client_sock;
 }
 
 int ConnectClientSocket(std::filesystem::path path) {
