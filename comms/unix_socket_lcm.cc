@@ -81,6 +81,13 @@ std::string BuildUrl(SocketConfig config) {
                                                 ? "server" : "client");
 }
 
+// Convenience function for styleguide-disfavored pointer magic.
+struct sockaddr* upcast_sockaddr_un(struct sockaddr_un* input) {
+  // Pointer-reinterpretation is a common idiom for posix sockets, in
+  // effect acting as a less safe version of superclass dynamic_cast<>.
+  return reinterpret_cast<struct sockaddr*>(input);
+}
+
 int CreateServerSocketAndAwait(std::filesystem::path path) {
   int server_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
   DRAKE_DEMAND(server_sock != -1);
@@ -93,10 +100,8 @@ int CreateServerSocketAndAwait(std::filesystem::path path) {
 
   int bind_result = bind(
       server_sock,
-      // Pointer-reinterpretation is a common idiom for posix sockets, in
-      // effect acting as a less safe version of superclass dynamic_cast<>.
-      reinterpret_cast<struct sockaddr*>(&server_sockaddr),
-      &server_sockaddr_len);
+      upcast_sockaddr_un(&server_sockaddr),
+      server_sockaddr_len);
   if (bind_result == -1) {
     drake::log()->error("Bind error: {}", strerror(errno));
     close(server_sock);
@@ -115,9 +120,7 @@ int CreateServerSocketAndAwait(std::filesystem::path path) {
   socklen_t client_sockaddr_len = sizeof(client_sockaddr);
   int client_sock = accept(
       server_sock,
-      // Pointer-reinterpretation is a common idiom for posix sockets, in
-      // effect acting as a less safe version of superclass dynamic_cast<>.
-      reinterpret_cast<struct sockaddr*>(&client_sockaddr),
+      upcast_sockaddr_un(&client_sockaddr),
       &client_sockaddr_len);
   if (client_sock == -1){
     drake::log()->error("Accept error: {}", strerror(errno));
@@ -131,7 +134,20 @@ int CreateServerSocketAndAwait(std::filesystem::path path) {
 }
 
 int ConnectClientSocket(std::filesystem::path path) {
+  int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+  struct sockaddr_un client_sockaddr;
+  socklen_t client_sockaddr_len = sizeof(client_sockaddr);
 
+  if (sock < 0) {
+    drake::log()->error("Error creating client socket: {}", strerror(errno));
+    DRAKE_DEMAND(sock >= 0);
+  }
+  client_sockaddr.sun_family = AF_UNIX;
+  strcpy(client_sockaddr.sun_path, path.c_str());
+  connect(sock,
+          upcast_sockaddr_un(&client_sockaddr),
+          client_sockaddr_len);
+  return sock;
 }
 
 } // namespace
@@ -143,6 +159,18 @@ class UnixSocketLcm::Impl {
   explicit Impl(std::string lcm_url)
   : config_(ParseUrl(lcm_url)) {
     DRAKE_DEMAND(lcm_url == BuildUrl(config_));
+    DRAKE_DEMAND(config_.filename.size() < 108);  // see `man 7 unix`.
+    int result = -999;
+    if (config_.end == kServer) {
+      result = CreateServerSocketAndAwait(config_.filename);
+    } else if (config_.end == kClient) {
+      result = ConnectClientSocket(config_.filename);
+    }
+    if (result < 0) {
+      drake::log()->error("Bind error: {}", strerror(errno));
+      DRAKE_DEMAND(result >= 0);
+    }
+    fd_ = result;
   }
 
   ~Impl() {
@@ -175,6 +203,7 @@ class UnixSocketLcm::Impl {
 
  private:
   SocketConfig config_;
+  int fd_;
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)
