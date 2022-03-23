@@ -13,12 +13,10 @@ namespace comms {
 /**
  * An implementation of DrakeLcmInterface that uses unix domain sockets.
  *
- * A unix domain seqpacket socket is a reliable, in-order, two-way connection
- * between *exactly two endpoints*.  They are typically created in pairs, and
- * are named and tracked via filesystem nodes.
- *
+ * A unix domain socket is a reliable, in-order, two-way connection between
+ * *exactly two endpoints*.  They are named and tracked via filesystem nodes.
  * The two endpoints of this LCM implementation are called "server" and
- * "client"; they are otherwise identical.
+ * "client"; the server must start first but they are otherwise identical.
  *
  * URLs for this LCM interface take the form:
  *
@@ -29,8 +27,10 @@ namespace comms {
  *  unix:/tmp/my_app-12345/lcm.socket?end=server
  *
  * It is the responsibility of the caller to ensure that the directory of this
- * URL exists and is readable and writeable by this process.  Common practice
- * is to use a per-instance directory under `/tmp`.
+ * URL exists and is readable and writeable by this process.
+ *
+ * This class is configured with blocking sends and poll-style receives, in
+ * order to manage backpressure deterministically.
  */
 class UnixSocketLcm : public drake::lcm::DrakeLcmInterface {
  public:
