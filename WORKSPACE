@@ -32,7 +32,7 @@
 
 workspace(name = "drake_external_examples")
 
-DRAKE_COMMIT = "master"
+DRAKE_COMMIT = "7335af130755c522966f935891df135af9c2067e"
 DRAKE_CHECKSUM = ""
 
 # Or choose a specific revision of Drake to use.

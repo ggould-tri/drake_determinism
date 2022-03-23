@@ -11,7 +11,8 @@ namespace drake_determinism {
 namespace comms {
 
 /**
- * An implementation of DrakeLcmInterface that uses unix domain sockets.
+ * An implementation of DrakeLcmInterface that uses LCM message serialization
+ * over a unix domain socket.
  *
  * A unix domain socket is a reliable, in-order, two-way connection between
  * *exactly two endpoints*.  They are named and tracked via filesystem nodes.

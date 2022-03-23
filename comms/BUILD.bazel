@@ -11,3 +11,13 @@ cc_library(
     ],
     hdrs = ["unix_socket_lcm.h"],
 )
+
+cc_test(
+    name = "unix_socket_lcm_test",
+    srcs = ["test/unix_socket_lcm_test.cc"],
+    deps = [
+        ":unix_socket_lcm",
+        "@drake//common:temp_directory",
+        "@gtest//:main",
+    ],
+)
