@@ -33,14 +33,16 @@ namespace comms {
  * This class is configured with blocking sends and poll-style receives, in
  * order to manage backpressure deterministically.
  */
-class UnixSocketLcm : public drake::lcm::DrakeLcmInterface {
+class UnixSocketLcm final : public drake::lcm::DrakeLcmInterface {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(UnixSocketLcm);
 
   /**
    * Constructs using the given URL.  A receive thread will be started.
+   * @warning THIS BLOCKS.
    */
   explicit UnixSocketLcm(std::string lcm_url);
+  ~UnixSocketLcm() final;
 
   void Publish(const std::string&, const void*, int,
                std::optional<double>) override;
@@ -51,11 +53,12 @@ class UnixSocketLcm : public drake::lcm::DrakeLcmInterface {
   std::shared_ptr<drake::lcm::DrakeSubscriptionInterface> SubscribeAllChannels(
       drake::lcm::DrakeLcmInterface::MultichannelHandlerFunction) override;
   int HandleSubscriptions(int) override;
+  void OnHandleSubscriptionsError(const std::string&) override;
 
  private:
   // Use a pimpl pattern for consistency with DrakeLcm.
   class Impl;
-  std::unique_ptr<Impl> impl_;
+  const std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace comms

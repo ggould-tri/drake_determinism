@@ -57,8 +57,8 @@ enum UnixSocketEnd {
 };
 
 struct SocketConfig {
-  std::string filename;
-  UnixSocketEnd end;
+  std::string filename = "";
+  UnixSocketEnd end = kClient;
 };
 
 SocketConfig ParseUrl(std::string url) {
@@ -152,7 +152,7 @@ int ConnectClientSocket(std::filesystem::path path) {
 
 } // namespace
 
-class UnixSocketLcm::Impl {
+class UnixSocketLcm::Impl final {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Impl)
 
@@ -201,13 +201,19 @@ class UnixSocketLcm::Impl {
     return 0;  // ...
   }
 
+  void OnHandleSubscriptionsError(const std::string& err) {
+    ;  // ...
+  }
+
  private:
   SocketConfig config_;
-  int fd_;
+  int fd_{};
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)
     : impl_(std::make_unique<Impl>(lcm_url)) {}
+
+UnixSocketLcm::~UnixSocketLcm() {}
 
 void UnixSocketLcm::Publish(const std::string& channel,
                             const void* data, int data_size,
@@ -231,6 +237,10 @@ std::shared_ptr<DrakeSubscriptionInterface> UnixSocketLcm::SubscribeAllChannels(
 
 int UnixSocketLcm::HandleSubscriptions(int timeout_millis) {
   return impl_->HandleSubscriptions(timeout_millis);
+}
+
+void UnixSocketLcm::OnHandleSubscriptionsError(const std::string& err) {
+  impl_->OnHandleSubscriptionsError(err);
 }
 
 
