@@ -12,12 +12,22 @@ cc_library(
     hdrs = ["unix_socket_lcm.h"],
 )
 
-cc_test(
-    name = "unix_socket_lcm_test",
-    srcs = ["test/unix_socket_lcm_test.cc"],
+cc_library(
+    name = "unix_seqpacket",
+    srcs = ["unix_seqpacket.cc"],
     deps = [
-        ":unix_socket_lcm",
-        "@drake//common:temp_directory",
+        "@drake//common:essential",
+        "@lcm",
+    ],
+    hdrs = ["unix_seqpacket.h"],
+)
+
+cc_test(
+    name = "unix_seqpacket_test",
+    srcs = ["test/unix_seqpacket_test.cc"],
+    deps = [
+        ":unix_seqpacket",
         "@gtest//:main",
+        "@fmt",
     ],
 )
