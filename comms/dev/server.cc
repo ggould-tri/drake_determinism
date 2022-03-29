@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <errno.h>
 
 int main(int argc, char *argv[]) {
   printf("Starting\n");
@@ -20,8 +21,10 @@ int main(int argc, char *argv[]) {
     return 1;
   printf("Socket created\n");
   if (bind(sockfd, (struct sockaddr *) &addr,
-           sizeof(sa_family_t) + strlen(str) + 1) == -1)
+           sizeof(sa_family_t) + strlen(str) + 1) == -1) {
+    printf("Failed: %d", errno);
     return 1;
+  }
   printf("Socket bound to abstract address\n");
 
   if (listen(sockfd, 1) == -1)

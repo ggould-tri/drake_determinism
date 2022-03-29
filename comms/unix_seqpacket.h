@@ -32,14 +32,23 @@ class UnixSeqpacket final {
    * Creates and binds a server socket, listens on it, and accepts exactly
    * one incoming connection.
    *
+   * @returns the resulting error, if any, as some may be recoverable.
+   *
    * @warning Blocking method. */
-  void StartAsServer();
+  int StartAsServer();
 
   /**
    * Creates and connects a client socket.
    *
    * @warning Blocking method. */
   void StartAsClient();
+
+  /**
+   * Attempts to start as server, but if the address is already in use
+   * attempts to start as client.
+   *
+   * @warning Blocking method. */
+  void StartWithFallback();
 
   /**
    * If `StartAsServer` or `StartAsClient` has been called, returns the file

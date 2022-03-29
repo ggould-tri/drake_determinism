@@ -49,5 +49,36 @@ GTEST_TEST(ClientServerTest, UnixSeqpacketTest) {
   server_thread.join();
 }
 
+
+GTEST_TEST(FallbackTest, UnixSeqpacketTest) {
+  const std::string name = get_safe_name();
+  const std::string first_to_second = "first-to-second message";
+  const std::string second_to_first = "second-to-first message";
+  auto run_first = [&]() {
+                      UnixSeqpacket first(name);
+                      first.StartWithFallback();
+                      int written = write(first.fd(), first_to_second.c_str(),
+                                          first_to_second.length() + 1);
+                      EXPECT_EQ(written, first_to_second.length() + 1);
+                      char buf[256];
+                      recv(first.fd(), &buf, 256, 0);
+                      EXPECT_EQ(std::string(buf), second_to_first);
+                    };
+  auto run_second = [&]() {
+                      UnixSeqpacket second(name);
+                      second.StartWithFallback();
+                      int written = write(second.fd(), second_to_first.c_str(),
+                                          second_to_first.length() + 1);
+                      EXPECT_EQ(written, second_to_first.length() + 1);
+                      char buf[256];
+                      recv(second.fd(), &buf, 256, 0);
+                      EXPECT_EQ(std::string(buf), first_to_second);
+                    };
+  std::thread first_thread(run_first);
+  std::thread second_thread(run_second);
+  second_thread.join();
+  first_thread.join();
+}
+
 }  // namespace comms
 }  // namespace drake_determinism

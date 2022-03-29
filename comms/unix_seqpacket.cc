@@ -54,7 +54,7 @@ UnixSeqpacket::~UnixSeqpacket() {
   }
 }
 
-void UnixSeqpacket::StartAsServer() {
+int UnixSeqpacket::StartAsServer() {
   memset(&server_sockaddr_, 0, sizeof(struct sockaddr_un));
   server_sockaddr_.sun_family = AF_UNIX;
   strncpy(&server_sockaddr_.sun_path[1],
@@ -64,7 +64,9 @@ void UnixSeqpacket::StartAsServer() {
 
   int err = ::bind(*server_fd_, upcast_sockaddr_un(&server_sockaddr_),
                    sizeof(sa_family_t) + abstract_name_.length() + 1);
-  DemandWithErrno("bind()", err == 0);
+  if (err) {
+    return errno;
+  }
 
   err = listen(*server_fd_, 1);
   DemandWithErrno("listen()", err == 0);
@@ -75,6 +77,7 @@ void UnixSeqpacket::StartAsServer() {
       upcast_sockaddr_un(&endpoint_sockaddr_),
       &endpoint_sockaddr_len);
   DemandWithErrno("accept()", *endpoint_fd_ > 0);
+  return 0;
 }
 
 void UnixSeqpacket::StartAsClient() {
@@ -88,6 +91,10 @@ void UnixSeqpacket::StartAsClient() {
   int err = connect(*endpoint_fd_, upcast_sockaddr_un(&endpoint_sockaddr_),
                     sizeof(sa_family_t) + abstract_name_.length() + 1);
   DemandWithErrno("connect()", err == 0);
+}
+
+void UnixSeqpacket::StartWithFallback() {
+  if (StartAsServer() == EADDRINUSE) { StartAsClient(); }
 }
 
 int UnixSeqpacket::fd() const {
