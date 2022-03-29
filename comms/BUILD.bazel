@@ -5,6 +5,7 @@ cc_library(
     name = "unix_socket_lcm",
     srcs = ["unix_socket_lcm.cc"],
     deps = [
+        ":unix_seqpacket",
         "@drake//lcm:interface",
         "@drake//common:essential",
         "@lcm",

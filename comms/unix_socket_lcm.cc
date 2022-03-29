@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <drake/common/text_logging.h>
+#include <lcm/lcm-cpp.hpp>
 
 #include "comms/unix_seqpacket.h"
 
@@ -51,6 +52,9 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
   ~UnixSocketLcmSubscription() {
     ;  // ... ???
   }
+
+ private:
+  std::vector<lcm::ReceiveBuffer> queue_;
 };
 
 enum UnixSocketEnd {
@@ -103,6 +107,7 @@ class UnixSocketLcm::Impl final {
     switch (config_.end) {
       case kClient: connection_.StartAsClient(); break;
       case kServer: connection_.StartAsServer(); break;
+      case kFallback: connection_.StartWithFallback(); break;
     };
   }
 
@@ -140,7 +145,7 @@ class UnixSocketLcm::Impl final {
 
  private:
   SocketConfig config_;
-  UnixSeqpacket connection_{};
+  UnixSeqpacket connection_;
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)
