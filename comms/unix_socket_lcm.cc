@@ -54,33 +54,40 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
 };
 
 enum UnixSocketEnd {
+  kFallback,
   kServer,
   kClient
 };
 
 struct SocketConfig {
   std::string name = "";
-  UnixSocketEnd end = kClient;
+  UnixSocketEnd end = kFallback;
 };
 
 SocketConfig ParseUrl(std::string url) {
   DRAKE_DEMAND(url.substr(0, 5) == "unix:");
   std::string url_body = url.substr(5);
   size_t query_pos = url_body.rfind("?");
-  DRAKE_DEMAND(query_pos != std::string::npos);
-  std::string filename = url_body.substr(0, query_pos);
-  DRAKE_DEMAND(filename[0] == '/');
-  std::string query_string = url_body.substr(query_pos + 1);
-  DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
-  std::string endpoint_string = query_string.substr(4);
-  DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
-  UnixSocketEnd end = (endpoint_string == "client") ? kClient : kServer;
-  return SocketConfig{filename, end};
+  size_t end_of_name = (query_pos != std::string::npos
+                        ? query_pos : url_body.size());
+  std::string name = url_body.substr(0, end_of_name);
+  UnixSocketEnd end = kFallback;
+  if (query_pos != std::string::npos) {
+    std::string query_string = url_body.substr(query_pos + 1);
+    DRAKE_DEMAND(query_string.substr(0, 4) == "end=");
+    std::string endpoint_string = query_string.substr(4);
+    DRAKE_DEMAND(endpoint_string == "server" || endpoint_string == "client");
+    end = (endpoint_string == "client") ? kClient : kServer;
+  }
+  return SocketConfig{name, end};
 }
 
 std::string BuildUrl(SocketConfig config) {
-  return "unix:" + config.filename + "?end=" + (config.end == kServer
-                                                ? "server" : "client");
+  std::string url = "unix:" + config.name;
+  if (config.end != kFallback) {
+    url += "?end=" + (config.end == kServer ? "server" : "client");
+  }
+  return url;
 }
 
 } // namespace
