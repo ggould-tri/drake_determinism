@@ -9,6 +9,8 @@
 
 #include <drake/common/text_logging.h>
 
+#include "comms/unix_seqpacket.h"
+
 namespace drake_determinism {
 namespace comms {
 
@@ -57,7 +59,7 @@ enum UnixSocketEnd {
 };
 
 struct SocketConfig {
-  std::string filename = "";
+  std::string name = "";
   UnixSocketEnd end = kClient;
 };
 
@@ -81,75 +83,6 @@ std::string BuildUrl(SocketConfig config) {
                                                 ? "server" : "client");
 }
 
-// Convenience function for styleguide-disfavored pointer magic.
-struct sockaddr* upcast_sockaddr_un(struct sockaddr_un* input) {
-  // Pointer-reinterpretation is a common idiom for posix sockets, in
-  // effect acting as a less safe version of superclass dynamic_cast<>.
-  return reinterpret_cast<struct sockaddr*>(input);
-}
-
-int CreateServerSocketAndAwait(std::filesystem::path path) {
-  int server_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-  DRAKE_DEMAND(server_sock != -1);
-
-  struct sockaddr_un server_sockaddr;
-  socklen_t server_sockaddr_len = sizeof(server_sockaddr);
-  server_sockaddr.sun_family = AF_UNIX;
-  strcpy(server_sockaddr.sun_path, path.c_str());
-  std::filesystem::remove(path);
-
-  int bind_result = bind(
-      server_sock,
-      upcast_sockaddr_un(&server_sockaddr),
-      server_sockaddr_len);
-  if (bind_result == -1) {
-    drake::log()->error("Bind error: {}", strerror(errno));
-    close(server_sock);
-    DRAKE_DEMAND(bind_result != -1);
-  }
-
-  drake::log()->info("Created server socket and listening for connections: {}",
-                     path);
-  int listen_result = listen(server_sock, kBacklog);
-  if (listen_result == -1) {
-    drake::log()->error("Listen error: {}", strerror(errno));
-    close(server_sock);
-    DRAKE_DEMAND(listen_result != -1);
-  }
-  struct sockaddr_un client_sockaddr;
-  socklen_t client_sockaddr_len = sizeof(client_sockaddr);
-  int client_sock = accept(
-      server_sock,
-      upcast_sockaddr_un(&client_sockaddr),
-      &client_sockaddr_len);
-  if (client_sock == -1){
-    drake::log()->error("Accept error: {}", strerror(errno));
-    close(server_sock);
-    close(client_sock);
-    exit(1);
-  }
-
-  drake::log()->info("Got a connection on socket: {}", path);
-  return client_sock;
-}
-
-int ConnectClientSocket(std::filesystem::path path) {
-  int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-  struct sockaddr_un client_sockaddr;
-  socklen_t client_sockaddr_len = sizeof(client_sockaddr);
-
-  if (sock < 0) {
-    drake::log()->error("Error creating client socket: {}", strerror(errno));
-    DRAKE_DEMAND(sock >= 0);
-  }
-  client_sockaddr.sun_family = AF_UNIX;
-  strcpy(client_sockaddr.sun_path, path.c_str());
-  connect(sock,
-          upcast_sockaddr_un(&client_sockaddr),
-          client_sockaddr_len);
-  return sock;
-}
-
 } // namespace
 
 class UnixSocketLcm::Impl final {
@@ -157,20 +90,13 @@ class UnixSocketLcm::Impl final {
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Impl)
 
   explicit Impl(std::string lcm_url)
-  : config_(ParseUrl(lcm_url)) {
+  : config_(ParseUrl(lcm_url)),
+    connection_(config_.name) {
     DRAKE_DEMAND(lcm_url == BuildUrl(config_));
-    DRAKE_DEMAND(config_.filename.size() < 108);  // see `man 7 unix`.
-    int result = -999;
-    if (config_.end == kServer) {
-      result = CreateServerSocketAndAwait(config_.filename);
-    } else if (config_.end == kClient) {
-      result = ConnectClientSocket(config_.filename);
-    }
-    if (result < 0) {
-      drake::log()->error("Bind error: {}", strerror(errno));
-      DRAKE_DEMAND(result >= 0);
-    }
-    fd_ = result;
+    switch (config_.end) {
+      case kClient: connection_.StartAsClient(); break;
+      case kServer: connection_.StartAsServer(); break;
+    };
   }
 
   ~Impl() {
@@ -207,7 +133,7 @@ class UnixSocketLcm::Impl final {
 
  private:
   SocketConfig config_;
-  int fd_{};
+  UnixSeqpacket connection_{};
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)

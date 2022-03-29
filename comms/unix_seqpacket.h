@@ -18,10 +18,6 @@ namespace comms {
  *
  * This class is not and cannot be MacOS compatible, as Apple provides neither
  * SOCK_SEQPACKET nor abstract naming.  Insert rude emoji here.
- *
- * The fd provided by this class will have blocking writes and nonblocking
- * reads.  The reads will follow unix datagram semantics, ie, a read will
- * never return data from multiple writes.
  */
 class UnixSeqpacket final {
  public:
