@@ -40,7 +40,7 @@ void DemandWithErrno(const std::string& description, bool demand) {
 
 UnixSeqpacket::UnixSeqpacket(const std::string& abstract_name)
     : abstract_name_(abstract_name) {
-  DRAKE_DEMAND(abstract_name.size() < 106);  // see `man 7 unix`.
+  DRAKE_DEMAND(abstract_name.size() < 106);  // See `man 7 unix`.
 }
 
 UnixSeqpacket::~UnixSeqpacket() {

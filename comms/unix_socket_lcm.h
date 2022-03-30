@@ -22,14 +22,22 @@ namespace comms {
  *
  * URLs for this LCM interface take the form:
  *
- *  unix:/<arbitrary_name>?end=[server|client]
+ *  unix:/<arbitrary_name>[?end=(server|client)]
  *
- * This class is configured with blocking sends and poll-style receives, in
- * order to manage backpressure deterministically.
+ * If the end is omitted, the interface will attempt to detect which end it is
+ * and start in the appropriate mode.
+ *
+ * The underlying serialization format is the LCM event log format.
  */
 class UnixSocketLcm final : public drake::lcm::DrakeLcmInterface {
  public:
   DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(UnixSocketLcm);
+
+  /**
+   * Maximum packet size; chosen arbitrarily.  There is little advantage to
+   * fragmentation since everything ends up buffered in memory regardless.
+   */
+  constexpr static int kMtu = 1 << 15;
 
   /**
    * Constructs using the given URL.  A receive thread will be started.
