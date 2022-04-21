@@ -1,12 +1,15 @@
 #include "comms/unix_socket_lcm.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
 #include <filesystem>
+#include <regex>
 #include <unistd.h>
-#include <glib.h>
 
 #include <fmt/format.h>
+#include <glib.h>
 #include <drake/common/text_logging.h>
+#include <drake/common/scope_exit.h>
 #include <lcm/lcm-cpp.hpp>
 #include <lcm/eventlog.h>
 
@@ -39,24 +42,25 @@ constexpr static int kBacklog = 1;
 #endif
 
 // This class is a simplified version of `DrakeSubscription` that removes the
-// native interface parts.  It is only ever held via a shared_ptr, and uses a
-// self-reference to keep itself alive after the caller releases it.
-class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
+// native interface parts.  It is only ever held via a shared_ptr, and (if
+// unsibscribe_on_delete is false) uses a self-reference to keep itself alive
+// after the caller releases it.
+class Subscription final : public DrakeSubscriptionInterface {
  public:
   // DrakeLcm keeps this pinned; we will do likewise to minimize differences.
-  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(UnixSocketLcmSubscription)
+  DRAKE_NO_COPY_NO_MOVE_NO_ASSIGN(Subscription)
 
   using HandlerFunction = DrakeLcmInterface::HandlerFunction;
   using MultichannelHandlerFunction =
       DrakeLcmInterface::MultichannelHandlerFunction;
 
-  static std::shared_ptr<UnixSocketLcmSubscription> CreateSingleChannel(
+  static std::shared_ptr<Subscription> CreateSingleChannel(
       const std::string& channel,
       HandlerFunction single_channel_handler) {
     // The argument to subscribeFunction is regex (not a string literal), so
     // we'll need to escape the channel name before calling subscribeFunction.
     char* const channel_regex = g_regex_escape_string(channel.c_str(), -1);
-    ScopeExit guard([channel_regex](){ g_free(channel_regex); });
+    drake::ScopeExit guard([channel_regex](){ g_free(channel_regex); });
 
     return Create(channel_regex,
                   [handler = std::move(single_channel_handler)](
@@ -65,19 +69,20 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
                   });
   }
 
-  static std::shared_ptr<UnixSocketLcmSubscription> CreateMultichannel(
+  static std::shared_ptr<Subscription> CreateMultichannel(
       MultichannelHandlerFunction multichannel_handler) {
     return Create(".*", std::move(multichannel_handler));
   }
 
-  static std::shared_ptr<DrakeSubscription> Create(
+  static std::shared_ptr<Subscription> Create(
         std::string_view channel_regex,
         MultichannelHandlerFunction handler) {
     DRAKE_DEMAND(handler != nullptr);
 
     // Create the result.
-    auto result = std::make_shared<UnixSocketLcmSubscription>();
-    result->channel_regex_ = channel_regex;
+    // (FYI: `new` here because private ctor inacccessible to `make_shared`)
+    auto result = std::shared_ptr<Subscription>(new Subscription());
+    result->channel_regex_ = std::regex(std::string(channel_regex));
     result->user_callback_ = std::move(handler);
     result->weak_self_reference_ = result;
     result->strong_self_reference_ = result;
@@ -117,17 +122,23 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
     strong_self_reference_ = {};
   }
 
-  ~UnixSocketLcmSubscription() {
+  ~Subscription() {
     DRAKE_DEMAND(strong_self_reference_ == nullptr);  // Must Detach() first.
+  }
+
+  void MaybeHandle(const lcm_eventlog_event_t& message) {
+    std::string channel(message.channel, message.channellen);
+    if (std::regex_match(channel, channel_regex_)) {
+      user_callback_(channel, message.data, message.datalen);
+    }
   }
 
  private:
   // Use the static factories instead.
-  explicit UnixSocketLcmSubscription() {}
+  explicit Subscription() {}
 
   std::vector<lcm::ReceiveBuffer> queue_;
-
-  std::string channel_regex_;
+  std::regex channel_regex_;
 
   // The native handle we can use to unsubscribe.
   ::lcm::LCM* native_instance_{};
@@ -137,8 +148,8 @@ class UnixSocketLcmSubscription final : public DrakeSubscriptionInterface {
   DrakeLcmInterface::MultichannelHandlerFunction user_callback_;
 
   // We can use "strong" to pretend a subscriber is still active.
-  std::weak_ptr<UnixSocketLcmSubscription> weak_self_reference_;
-  std::shared_ptr<UnixSocketLcmSubscription> strong_self_reference_;
+  std::weak_ptr<Subscription> weak_self_reference_;
+  std::shared_ptr<Subscription> strong_self_reference_;
 };
 
 enum UnixSocketEnd {
@@ -267,20 +278,48 @@ class UnixSocketLcm::Impl final {
 
   std::shared_ptr<DrakeSubscriptionInterface> Subscribe(
       const std::string& channel, HandlerFunction callback) {
-    return std::make_shared<UnixSocketLcmSubscription>(channel, callback);
+    auto result =
+        Subscription::CreateSingleChannel(channel, callback);
+    subscriptions_.push_back(result);
+    return result;
   }
 
   std::shared_ptr<DrakeSubscriptionInterface> SubscribeAllChannels(
       MultichannelHandlerFunction callback) {
-    return std::make_shared<UnixSocketLcmSubscription>(callback);
+    auto result = Subscription::CreateMultichannel(callback);
+    subscriptions_.push_back(result);
+    return result;
   }
 
   int HandleSubscriptions(int timeout_millis) {
-    return 0;  // ...
+    auto end_time = (std::chrono::steady_clock::now()
+                     + std::chrono::milliseconds(timeout_millis));
+    int messages_handled = 0;
+    auto keep_running =
+        [&]() {
+          return (messages_handled == 0
+                  && timeout_millis > 0
+                  && std::chrono::steady_clock::now() < end_time);
+        };
+    auto received = Receive();
+    do {
+      while (received.has_value()) {
+        messages_handled++;
+        for (const auto& subscription_weak : subscriptions_) {
+          std::shared_ptr<Subscription> subscription =
+              subscription_weak.lock();
+          if (subscription) {
+            subscription->MaybeHandle(*received);
+          }
+        }
+        received = Receive();
+      }
+    } while (messages_handled == 0 && keep_running());
+    return messages_handled;
   }
 
   void OnHandleSubscriptionsError(const std::string& err) {
-    ;  // ...
+    DRAKE_DEMAND(false);  // This should never be called.
   }
 
  private:
@@ -290,7 +329,7 @@ class UnixSocketLcm::Impl final {
   std::vector<uint8_t> rx_buffer_;
   std::vector<uint8_t> tx_buffer_;
 
-  std::vector<std::weak_ptr<UnixSocketLcmSubscription>> subscriptions_;
+  std::vector<std::weak_ptr<Subscription>> subscriptions_;
 };
 
 UnixSocketLcm::UnixSocketLcm(std::string lcm_url)

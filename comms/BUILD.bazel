@@ -8,9 +8,21 @@ cc_library(
         ":unix_seqpacket",
         "@drake//lcm:interface",
         "@drake//common:essential",
+        "@drake//common:scope_exit",
+        "@glib",
         "@lcm",
     ],
     hdrs = ["unix_socket_lcm.h"],
+)
+
+cc_test(
+    name = "unix_socket_lcm_test",
+    srcs = ["test/unix_socket_lcm_test.cc"],
+    deps = [
+        ":unix_socket_lcm",
+        "@drake//lcmtypes:scope",
+        "@gtest//:main",
+    ],
 )
 
 cc_library(
