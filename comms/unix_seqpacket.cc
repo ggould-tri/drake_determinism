@@ -65,6 +65,10 @@ int UnixSeqpacket::StartAsServer() {
   int err = ::bind(*server_fd_, upcast_sockaddr_un(&server_sockaddr_),
                    sizeof(sa_family_t) + abstract_name_.length() + 1);
   if (err) {
+    // THIS IS CRUCIAL.  Spooky-action-at-a-distance heisenbugs follow if this
+    // close() fails to happen.
+    // TODO(ggould) scope-guard this or something?
+    close(*server_fd_);
     return errno;
   }
 
